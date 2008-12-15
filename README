@@ -1,1 +1,23 @@
 couchdb + ruby + fuse = couchdbfs
+
+= couchdbfs
+A fuse filesystem powered by couchdb similar to mysqlfs with mysql.
+
+== Install
+ a) Grab Couchdb from http://couchdb.apache.org/
+ b) sudo gem install jchris-couchrest -s http://gems.github.com
+ c) install ruby fusefs (http://rubyforge.org/projects/fusefs/)
+ d) get couchdbfs from here
+
+== Usage
+ruby couchdbfs dest_dir
+
+== Feature
+ - Build entirely over couchdb
+ - Open source
+
+== TODO
+ - specify database from commandline
+ - use attribute/user/group
+ - Fix bugs
+ - Size bug
