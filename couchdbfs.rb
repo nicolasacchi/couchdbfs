@@ -2,17 +2,19 @@ require 'fusefs'
 require 'rubygems'
 require 'couchrest'
 
-DEBUG = true
+DEBUG = false #true
 
-class FileCouch < CouchRest::Model
-  use_database CouchRest.database!('http://localhost:5984/couchfs')
-	def FileCouch.usedb
-  	use_database CouchRest.database!('http://localhost:5984/couchfs')
-	end
-	view_by :name
-	view_by :path,
-					:map => "          function(doc) {
-            if (doc['couchrest-type'] == 'FileCouch' && doc['path']) {
+class CouchdbDir
+  def initialize()
+  	@db = CouchRest.database!("http://127.0.0.1:5984/couchfs")
+		create_view()
+		create_root()
+  end
+
+	def create_view
+      @view = {}
+			@view['path'] = {'map' => "function(doc) {
+            if (doc['path']) {
 						if(doc['path'] == \"/\")
 						{
               emit(doc['path'], null);
@@ -23,10 +25,10 @@ class FileCouch < CouchRest::Model
             }
 				}
           }"
+			}
 
-	view_by :base_path,
-					:map => "          function(doc) {
-            if (doc['couchrest-type'] == 'FileCouch' && doc['base_path']) {
+			@view['base_path'] = {'map' => "function(doc) {
+            if (doc['base_path']) {
 						if(doc['base_path'] == \"/\")
 						{
               emit(doc['base_path'], null);
@@ -37,124 +39,116 @@ class FileCouch < CouchRest::Model
             }
 				}
           }"
-	view_by :type
-end
+			}
+      @db.save({
+        "_id" => "_design/doc",
+        :views => @view
+      })
+	end
 
-
-class CouchdbDir
-  def initialize()
-		@db = FileCouch.usedb()
-		@cache = {}
-  end
+	#create the root dir
+	def create_root
+		if @db.view("doc/path", :key => "/")['rows'].nitems == 0
+	    ret = {"path" => "/", "name" => "/", "files" => []}
+			@db.save(ret)
+		end
+	end
 
   def contents(path)
 		p "call:contents?(#{path})" if DEBUG
-		@cache = {}
-		files = FileCouch.by_path :key => path
+		files = @db.view("doc/base_path", :key => path)
+		p files if DEBUG
 		ret = []
-		files.each do |fil|
-			ret += fil["files"].map {|t| t.sub(/^[D|F]/, "") }
+		files['rows'].each do |fil|
+			ret << @db.get(fil['id'])['name']
 		end
-		@cache[path] = files
 		return ret
   end
   def directory?(path)
-		p "call:directory?(#{path})" if DEBUG
-		name = File.basename(path)
-		path_only_b = path.sub(/#{name}$/, "")
-		path_only = path_only_b != "/" ? path_only_b.sub(/\/$/, "") : path_only_b
-		if @cache[path_only]
-			files = @cache[path_only] 
+		dir = @db.view("doc/path", :key => path)['rows']
+		if dir.nitems > 0
+			return !@db.get(dir[0]['id']).key?("size")
 		else
-			files = FileCouch.by_path :key => path_only
+			return false
 		end
-		trovato = false
-    files.each do |fil|
-			if fil["files"].include?("D#{name}")
-				trovato = true
-			end
-		end
-		return trovato
   end
 
   def file?(path)
-		p "call:file?(#{path})" if DEBUG
-		name = File.basename(path)
-		path_only_b = path.sub(/#{name}$/, "")
-		path_only = path_only_b != "/" ? path_only_b.sub(/\/$/, "") : path_only_b
-		if @cache[path_only] != nil
-			files = @cache[path_only]
+		dir = @db.view("doc/path", :key => path)['rows']
+		if dir.nitems > 0
+			return @db.get(dir[0]['id']).key?("size")
 		else
-			files = FileCouch.by_path :key => path_only
+			return false
 		end
-		trovato = false
-    files.each do |fil|
-			if fil["files"].include?("F#{name}")
-				trovato = true
-			end
-		end
-		return trovato
   end
 
   def touch(path)
     puts "#{path} has been pushed like a button!"
   end
   def read_file(path)
-    ret = FileCouch.by_path :key => path
-		ret.each do |fil|
+    ret = @db.view("doc/path", :key => path)
+		ret['rows'].each do |fil|
 			return @db.fetch_attachment(fil["_id"], fil["name"])
 		end
   end
   def size(path)
 		p "call:size(#{path})"
-		ret = FileCouch.by_path :key => path 
-		ret.each do |fil|
+		ret = @db.view("doc/path", :key => path)
+		ret['rows'].each do |fil|
 			return fil["size"] ? fil["size"] : 10
 		end
   end
 
   # File writing
   def can_write?(path)
-    true
+		return @db.view("doc/path", :key => path)['rows'].nitems == 0
   end
-  def write_to(path,body)
+	def write_to(path, body)
+		name = File.basename(path)
+		path_only = path.sub(/#{name}$/, "")
+    file = {"path" => path, "base_path" => path_only, "_attachments" => { name => {"data" => body}}, "name" => name, "size" => body.length, "type" => "f"}
+		@db.save(file)
+	end
+  def write_to_old(path,body)
 		name = File.basename(path)
 		path_only = path.sub(/#{name}$/, "")
 		body ||= ""
-		ret = FileCouch.by_path :key => path
-		ret.each do |r|
+		ret = @db.view("doc/path", :key => path)
+		ret['rows'].each do |r|
 			r.destroy
 		end
-    ret = FileCouch.new({"path" => path, "base_path" => path_only, "_attachments" => { name => {"data" => body}}, "name" => name, "size" => body.length})
-		ret.save	
+    ret = {"type" => "FileCouch", "path" => path, "base_path" => path_only, "_attachments" => { name => {"data" => body}}, "name" => name, "size" => body.length}
+		#ret.save	
+		@db.save(ret)
 		ret3 = {}
 		if path_only != "/"
-	    ret2 = FileCouch.by_path :key => path_only.sub(/\/$/, "")
+	    ret2 = @db.view("doc/path", :key => path_only.sub(/\/$/, ""))
 		else
-	    ret2 = FileCouch.by_path :key => path_only
+	    ret2 = @db.view("doc/path", :key => path_only)
 		end
 		ret3 = nil
-		if ret2.nitems == 0
+		if ret2['rows'].nitems == 0
 			name2 = File.basename(path_only)
 			path_only2 = path_only.sub(/\/#{name2}$/, "")
 			if path_only2 == ""
 				path_only2 = "/"
 			end
-    	ret3 = FileCouch.new({"path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []})
+    	ret3 = {"type" => "FileCouch", "path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []}
 		else
-			ret2.each do |r|
+			ret2['rows'].each do |r|
 				if r["files"].nitems < 1000
 					ret3 = r
 				end
 			end
 			if ret3 == nil
 				#new
-    		ret3 = FileCouch.new({"path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []})
+    		ret3 = {"type" => "FileCouch", "path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []}
 			end
 		end
     ret3["files"] ||= []
 		ret3["files"] << "F#{name}"
-		ret3.save
+		@db.save(ret3)
+		#ret3.save
   end
 
   # Delete a file
@@ -166,11 +160,11 @@ class CouchdbDir
 		path_only_b = path.sub(/#{name}$/, "")
 		path_only = path_only_b != "/" ? path_only_b.sub(/\/$/, "") : path_only_b
     
-		ret = FileCouch.by_path :key => path
+		ret = @db.view("doc/path", :key => path)
 		ret.each do |fil|
 			fil.destroy
 		end
-		ret = FileCouch.by_path :key => path_only
+		ret = @db.view("doc/path", :key => path_only)
 		ret.each do |dir|
 			if dir["files"].include?("D#{name}")
 				dir["files"].delete("D#{name}")
@@ -180,18 +174,25 @@ class CouchdbDir
 
 
   def can_mkdir?(path)
-		true
+		return @db.view("doc/path", :key => path)['rows'].nitems == 0
   end
   def mkdir(path)
 		name = File.basename(path)
 		path_only = path.sub(/#{name}$/, "")
-    ret = FileCouch.new({"path" => path, "base_path" => path_only, "name" => name, "files" => []})
-		ret.save	
+    dir = {"path" => path, "base_path" => path_only, "name" => name}
+		@db.save(dir)
+	end
+  def mkdir_old(path)
+		name = File.basename(path)
+		path_only = path.sub(/#{name}$/, "")
+    ret = {"type" => "FileCouch", "path" => path, "base_path" => path_only, "name" => name, "files" => []}
+		#ret.save
+		@db.save(ret)
 		ret3 = {}
 		if path_only != "/"
-	    ret2 = FileCouch.by_path :key => path_only.sub(/\/$/, "")
+	    ret2 = @db.view("doc/path", :key => path_only.sub(/\/$/, ""))
 		else
-	    ret2 = FileCouch.by_path :key => path_only
+	    ret2 = @db.view("doc/path", :key => path_only)
 		end
 		ret3 = nil
 		if ret2.nitems == 0
@@ -200,7 +201,7 @@ class CouchdbDir
 			if path_only2 == ""
 				path_only2 = "/"
 			end
-    	ret3 = FileCouch.new({"path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []})
+    	ret3 = {"type" => "FileCouch", "path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []}
 		else
 			ret2.each do |r|
 				if r["files"].nitems < 100
@@ -209,12 +210,13 @@ class CouchdbDir
 			end
 			if ret3 == nil
 				#new
-    		ret3 = FileCouch.new({"path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []})
+    		ret3 = {"type" => "FileCouch", "path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []}
 			end
 		end
     ret3["files"] ||= []
 		ret3["files"] << "D#{name}"
-		ret3.save
+		@db.save(ret3)
+		#ret3.save
   end
 
   # rmdir
@@ -222,33 +224,36 @@ class CouchdbDir
 		true
   end
   def rmdir(path)
-    ret = FileCouch.by_path :key => path
+    ret = @db.view("doc/path", :key => path)
 		ret.each do |fil|
 			fil.destroy
 		end
   end
 
+	def delete_db
+		@db.delete!
+	end
 end
 
-if (File.basename($0) == File.basename(__FILE__))
-  if (ARGV.size < 1)
-    puts "Usage: #{$0} <directory> <options>"
-    exit
-  end
-
-  dirname, yamlfile = ARGV.shift, ARGV.shift
-
-  unless File.directory?(dirname)
-    puts "Usage: #{dirname} is not a directory."
-    exit
-  end
-
-  root = CouchdbDir.new()
-
-  # Set the root FuseFS
-  FuseFS.set_root(root)
-
-  FuseFS.mount_under(dirname, *ARGV)
-
-  FuseFS.run # This doesn't return until we're unmounted.
-end
+#if (File.basename($0) == File.basename(__FILE__))
+#  if (ARGV.size < 1)
+#    puts "Usage: #{$0} <directory> <options>"
+#    exit
+#  end
+#
+#  dirname, yamlfile = ARGV.shift, ARGV.shift
+#
+#  unless File.directory?(dirname)
+#    puts "Usage: #{dirname} is not a directory."
+#    exit
+#  end
+#
+#  root = CouchdbDir.new()
+#
+#  # Set the root FuseFS
+#  FuseFS.set_root(root)
+#
+#  FuseFS.mount_under(dirname, *ARGV)
+#
+#  FuseFS.run # This doesn't return until we're unmounted.
+#end
