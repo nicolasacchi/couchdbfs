@@ -83,20 +83,30 @@ class CouchdbDir
   end
 
   def touch(path)
-    puts "#{path} has been pushed like a button!"
+    write_to(path, "")
   end
   def read_file(path)
     ret = @db.view("doc/path", :key => path)
-		ret['rows'].each do |fil|
-			return @db.fetch_attachment(fil["_id"], fil["name"])
+		if ret['rows'].nitems > 0
+			file = @db.get(ret['rows'][0]['id'])
+			if file.key?("size")
+				return @db.fetch_attachment(file["_id"], file["name"])
+			end
 		end
+		return false
   end
   def size(path)
-		p "call:size(#{path})"
 		ret = @db.view("doc/path", :key => path)
-		ret['rows'].each do |fil|
-			return fil["size"] ? fil["size"] : 10
+		if ret['rows'].nitems > 0
+			file = @db.get(ret['rows'][0]['id'])
+			if file.key?("size")
+				return file["size"]
+			else
+				#directory
+				return 0
+			end
 		end
+		return 0
   end
 
   # File writing
@@ -109,51 +119,17 @@ class CouchdbDir
     file = {"path" => path, "base_path" => path_only, "_attachments" => { name => {"data" => body}}, "name" => name, "size" => body.length, "type" => "f"}
 		@db.save(file)
 	end
-  def write_to_old(path,body)
-		name = File.basename(path)
-		path_only = path.sub(/#{name}$/, "")
-		body ||= ""
-		ret = @db.view("doc/path", :key => path)
-		ret['rows'].each do |r|
-			r.destroy
-		end
-    ret = {"type" => "FileCouch", "path" => path, "base_path" => path_only, "_attachments" => { name => {"data" => body}}, "name" => name, "size" => body.length}
-		#ret.save	
-		@db.save(ret)
-		ret3 = {}
-		if path_only != "/"
-	    ret2 = @db.view("doc/path", :key => path_only.sub(/\/$/, ""))
-		else
-	    ret2 = @db.view("doc/path", :key => path_only)
-		end
-		ret3 = nil
-		if ret2['rows'].nitems == 0
-			name2 = File.basename(path_only)
-			path_only2 = path_only.sub(/\/#{name2}$/, "")
-			if path_only2 == ""
-				path_only2 = "/"
-			end
-    	ret3 = {"type" => "FileCouch", "path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []}
-		else
-			ret2['rows'].each do |r|
-				if r["files"].nitems < 1000
-					ret3 = r
-				end
-			end
-			if ret3 == nil
-				#new
-    		ret3 = {"type" => "FileCouch", "path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []}
-			end
-		end
-    ret3["files"] ||= []
-		ret3["files"] << "F#{name}"
-		@db.save(ret3)
-		#ret3.save
-  end
 
   # Delete a file
   def can_delete?(path)
-		true
+		rows = @db.view("doc/path", :key => path)['rows']
+		if rows.nitems > 0
+			file = @db.get(rows[0]['id'])
+			if file.key?("size")
+				return true
+			end
+		end
+		false
   end
   def delete(path)
 		name = File.basename(path)
