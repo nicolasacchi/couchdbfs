@@ -132,22 +132,12 @@ class CouchdbDir
 		false
   end
   def delete(path)
-		name = File.basename(path)
-		path_only_b = path.sub(/#{name}$/, "")
-		path_only = path_only_b != "/" ? path_only_b.sub(/\/$/, "") : path_only_b
-    
-		ret = @db.view("doc/path", :key => path)
-		ret.each do |fil|
-			fil.destroy
-		end
-		ret = @db.view("doc/path", :key => path_only)
-		ret.each do |dir|
-			if dir["files"].include?("D#{name}")
-				dir["files"].delete("D#{name}")
-			end
+		row = @db.view("doc/path", :key => path)['rows']
+		if row.nitems > 0
+			file = @db.get(row[0]['id'])
+			@db.delete(file)
 		end
   end
-
 
   def can_mkdir?(path)
 		return @db.view("doc/path", :key => path)['rows'].nitems == 0
@@ -158,46 +148,21 @@ class CouchdbDir
     dir = {"path" => path, "base_path" => path_only, "name" => name}
 		@db.save(dir)
 	end
-  def mkdir_old(path)
-		name = File.basename(path)
-		path_only = path.sub(/#{name}$/, "")
-    ret = {"type" => "FileCouch", "path" => path, "base_path" => path_only, "name" => name, "files" => []}
-		#ret.save
-		@db.save(ret)
-		ret3 = {}
-		if path_only != "/"
-	    ret2 = @db.view("doc/path", :key => path_only.sub(/\/$/, ""))
-		else
-	    ret2 = @db.view("doc/path", :key => path_only)
-		end
-		ret3 = nil
-		if ret2.nitems == 0
-			name2 = File.basename(path_only)
-			path_only2 = path_only.sub(/\/#{name2}$/, "")
-			if path_only2 == ""
-				path_only2 = "/"
-			end
-    	ret3 = {"type" => "FileCouch", "path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []}
-		else
-			ret2.each do |r|
-				if r["files"].nitems < 100
-					ret3 = r
-				end
-			end
-			if ret3 == nil
-				#new
-    		ret3 = {"type" => "FileCouch", "path" => path_only, "base_path" => path_only2, "name" => name2, "files" => []}
-			end
-		end
-    ret3["files"] ||= []
-		ret3["files"] << "D#{name}"
-		@db.save(ret3)
-		#ret3.save
-  end
 
   # rmdir
   def can_rmdir?(path)
-		true
+		if path != "/"
+			if @db.view("doc/base_path", :key => path)['rows'].nitems == 0
+				row = @db.view("doc/path", :key => path)['rows']
+				if row.nitems > 0
+					file = @db.get(row[0]['id'])
+					if !file.key?('size')
+						return true
+					end
+				end
+			end
+		end
+		return false
   end
   def rmdir(path)
     ret = @db.view("doc/path", :key => path)

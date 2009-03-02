@@ -185,21 +185,52 @@ class TestCouchFs < Test::Unit::TestCase
 		assert(!ret)
 	end
 
+	#15
 	def test_delete
 		test_create_dir_with_file()
 		ret = @root.delete("/dir_test1/test")
 		ret = @root.contents("/dir_test1")
-		assert_equal(2, ret.nitems)
+		assert_equal(1, ret.nitems)
 		assert(ret.include?("test3"))
 		assert(!ret.include?("test"))
+		ret = @root.delete("/dir_test1/test3")
+		ret = @root.contents("/dir_test1")
+		assert_equal(0, ret.nitems)
+		assert(!ret.include?("test3"))
+		assert(!ret.include?("test"))
+		ret = @root.contents("/")
+		assert_equal(2, ret.nitems)
+		assert(!ret.include?("test3"))
+		assert(ret.include?("test1"))
+		assert(ret.include?("dir_test1"))
+		ret = @root.delete("/test1")
+		ret = @root.contents("/")
+		assert_equal(1, ret.nitems)
+		assert(!ret.include?("test3"))
+		assert(!ret.include?("test1"))
+		assert(ret.include?("dir_test1"))
+	end
 
-		assert(ret)
-		ret = @root.can_delete?("/dir_test1")
-		assert(!ret)
-		ret = @root.can_delete?("/test1")
-		assert(ret)
-		ret = @root.can_delete?("/test4")
-		assert(!ret)
+	#16
+	def test_can_rmdir
+		test_create_dir_with_file()
+		assert(!@root.can_rmdir?("/dir_test1/test"))
+		assert(!@root.can_rmdir?("/dir_test1"))
+		ret = @root.delete("/dir_test1/test3")
+		assert(!@root.can_rmdir?("/dir_test1"))
+		ret = @root.delete("/dir_test1/test")
+		assert(@root.can_rmdir?("/dir_test1"))
+		assert(!@root.can_rmdir?("/"))
+		ret = @root.delete("/test1")
+		assert(!@root.can_rmdir?("/"))
+	end
+
+	#17
+	def test_rmdir
+		test_create_dir_with_file()
+		ret = @root.delete("/dir_test1/test3")
+		ret = @root.delete("/dir_test1/test")
+		assert(!@root.rmdir?("/dir_test1"))
 	end
 
   def teardown
