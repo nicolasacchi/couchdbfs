@@ -1,5 +1,5 @@
 require 'test/unit'
-require 'couchdbfs'
+require 'couchdbfs_lib'
 
 class TestCouchFs < Test::Unit::TestCase
 
@@ -228,9 +228,15 @@ class TestCouchFs < Test::Unit::TestCase
 	#17
 	def test_rmdir
 		test_create_dir_with_file()
+		ret = @root.contents("/")
+		assert(ret.include?("dir_test1"))
 		ret = @root.delete("/dir_test1/test3")
 		ret = @root.delete("/dir_test1/test")
-		assert(!@root.rmdir?("/dir_test1"))
+		ret = @root.contents("/")
+		assert(ret.include?("dir_test1"))
+		ret = @root.rmdir("/dir_test1")
+		ret = @root.contents("/")
+		assert(!ret.include?("dir_test1"))
 	end
 
   def teardown
