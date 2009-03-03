@@ -1,3 +1,5 @@
+$LOAD_PATH << File.expand_path(File.dirname(__FILE__)) 
+
 require 'couchdbfs_lib'
 
 if (File.basename($0) == File.basename(__FILE__))
